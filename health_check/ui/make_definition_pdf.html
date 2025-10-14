@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>定義ファイル作成ツール（PDF取込 + 候補画像付き）</title>
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<style>
+  body { font-family: "Segoe UI", sans-serif; margin: 30px; }
+  h1 { margin-bottom: 10px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 15px; }
+  th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+  th { background: #f4f4f4; }
+  input { width: 95%; padding: 5px; font-size: 13px; }
+  button { margin-top: 20px; padding: 10px 25px; font-size: 15px; cursor: pointer; }
+  #candidateDialog {
+    display:none; position:fixed; top:50%; left:50%;
+    transform:translate(-50%,-50%); background:white;
+    border:2px solid #333; padding:20px; border-radius:8px;
+    box-shadow:0 0 20px rgba(0,0,0,0.3);
+    width:900px; height:700px; overflow:auto;
+  }
+  .img-wrap { position:relative; margin:10px; }
+  .img-wrap img { max-width:800px; border:1px solid #aaa; cursor:pointer; }
+  .img-wrap p { margin:5px 0; }
+</style>
+</head>
+<body>
+
+<h1>📄 定義ファイル作成ツール（PDF取込 + 候補画像付き）</h1>
+
+<!-- PDF選択 -->
+<label>PDFファイルを選択：</label>
+<input type="file" id="pdfInput" accept="application/pdf" onchange="handlePdfSelect(event)" />
+<br><br>
+
+<!-- 自動形式名 -->
+<label>形式名（自動設定）</label>
+<input type="text" id="formName" readonly style="width:300px; padding:5px;" placeholder="PDFを選択してください" />
+
+<!-- テーブル -->
+<table>
+  <thead>
+    <tr><th>#</th><th>Text（共通項目名）</th><th>Keyword（印字名）</th><th>Value（OCR値）</th></tr>
+  </thead>
+  <tbody id="items"></tbody>
+</table>
+
+<button onclick="startProcess()">▶ スタート</button>
+
+<div id="status"></div>
+
+<!-- 候補画像モーダル -->
+<div id="candidateDialog">
+  <h3>候補が複数見つかりました（クリックまたは番号入力で選択）</h3>
+  <div id="candidateList"></div>
+  <br>
+  <input type="number" id="selectId" placeholder="番号入力で選択" />
+  <button onclick="selectByNumber()">番号で選択</button>
+  <button onclick="closeDialog()">閉じる</button>
+</div>
+
+<script>
+let bridge = null;
+new QWebChannel(qt.webChannelTransport, channel => {
+  bridge = channel.objects.bridge;
+});
+
+// 固定Text一覧
+const FIXED_ITEMS = [
+  "氏名","生年月日","性別","身長","体重",
+  "BMI","血圧（最高）","血圧（最低）","視力（右）","視力（左）"
+];
+
+// テーブル描画
+const tbody = document.getElementById("items");
+FIXED_ITEMS.forEach((text, idx) => {
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td>${idx + 1}</td>
+    <td>${text}</td>
+    <td><input type="text" class="keyword" placeholder="例：身長(cm)" /></td>
+    <td><input type="text" class="value" placeholder="例：162.5" /></td>
+  `;
+  tbody.appendChild(tr);
+});
+
+// === PDFファイル選択処理 ===
+function handlePdfSelect(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const fileName = file.name.replace(/\.[^/.]+$/, ""); // 拡張子除去
+  document.getElementById("formName").value = fileName;
+  document.getElementById("status").textContent = `📎 ${file.name} を読み込みました`;
+}
+
+// === Python処理実行 ===
+function startProcess() {
+  if (!bridge) return alert("Bridge未接続です");
+  const formName = document.getElementById("formName").value.trim();
+  if (!formName) return alert("PDFを先に選択してください");
+
+  const rows = [...document.querySelectorAll("#items tr")];
+  const data = rows.map(r => ({
+    text: r.cells[1].innerText,
+    keyword: r.querySelector(".keyword").value.trim(),
+    value: r.querySelector(".value").value.trim()
+  }));
+
+  document.getElementById("status").textContent = "📡 Python処理中...";
+  bridge.processKeyword(JSON.stringify(data)).then(res => {
+    const candidates = JSON.parse(res);
+    showCandidates(candidates);
+    document.getElementById("status").textContent = "✅ 候補を表示中";
+  });
+}
+
+// === 候補画像表示 ===
+function showCandidates(candidates) {
+  const list = document.getElementById("candidateList");
+  list.innerHTML = "";
+
+  candidates.forEach((c, i) => {
+    const div = document.createElement("div");
+    div.className = "img-wrap";
+    div.innerHTML = `
+      <p><b>${c.keyword}</b>（候補 ${i+1}）</p>
+      <img src="${c.image}" onclick="selectCandidate(${i})" />
+      <p>領域ID: ${c.bboxes.map(b => b.id).join(", ")}</p>
+    `;
+    list.appendChild(div);
+  });
+
+  document.getElementById("candidateDialog").style.display = "block";
+}
+
+// === 候補選択 ===
+function selectCandidate(index) {
+  alert(`候補 ${index + 1} を選択しました！`);
+  closeDialog();
+}
+
+function selectByNumber() {
+  const id = parseInt(document.getElementById("selectId").value);
+  if (!id) return alert("番号を入力してください");
+  alert(`候補番号 ${id} が選択されました`);
+  closeDialog();
+}
+
+function closeDialog() {
+  document.getElementById("candidateDialog").style.display = "none";
+}
+</script>
+
+</body>
+</html>
