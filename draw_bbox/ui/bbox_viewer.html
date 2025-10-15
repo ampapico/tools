@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<title>BBox Viewer</title>
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<style>
+  body { font-family: sans-serif; margin: 20px; }
+  #canvas { position: relative; display: inline-block; }
+  .bbox {
+    position: absolute;
+    border: 2px solid red;
+    color: blue;
+    font-size: 14px;
+    background: rgba(255, 255, 255, 0.3);
+    cursor: move;
+    user-select: none;
+  }
+  .handle {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: red;
+    border: 1px solid white;
+    cursor: pointer;
+  }
+  .handle.br { right: -5px; bottom: -5px; cursor: se-resize; } /* 右下 */
+  .handle.tr { right: -5px; top: -5px; cursor: ne-resize; }  /* 右上 */
+  .handle.bl { left: -5px; bottom: -5px; cursor: sw-resize; }/* 左下 */
+  .handle.tl { left: -5px; top: -5px; cursor: nw-resize; }   /* 左上 */
+</style>
+</head>
+<body>
+  <h2>健康診断書 OCR結果の位置確認</h2>
+  <p>赤枠をドラッグで移動・サイズ変更できます。</p>
+  <div id="canvas">
+    <img id="bg" src="file:///C:/FULL/PATH/TO/draw_bbox/ui/tmp/bbox_demo.png" />
+  </div>
+
+  <script>
+    let bridge = null;
+
+    new QWebChannel(qt.webChannelTransport, (channel) => {
+      bridge = channel.objects.bridge;
+      init();
+    });
+
+    async function init() {
+      const bboxes = JSON.parse(await bridge.getBBoxes());
+      const canvas = document.getElementById("canvas");
+
+      for (const b of bboxes) {
+        const div = document.createElement("div");
+        div.className = "bbox";
+        div.style.left = b.x + "px";
+        div.style.top = b.y + "px";
+        div.style.width = b.w + "px";
+        div.style.height = b.h + "px";
+        div.dataset.id = b.id;
+        div.textContent = b.label;
+
+        // --- リサイズ用ハンドル追加 ---
+        ["tl", "tr", "bl", "br"].forEach(pos => {
+          const handle = document.createElement("div");
+          handle.className = "handle " + pos;
+          div.appendChild(handle);
+        });
+
+        canvas.appendChild(div);
+        makeDraggable(div);
+        makeResizable(div);
+      }
+    }
+
+    // --- 位置移動 ---
+    function makeDraggable(el) {
+      let offsetX = 0, offsetY = 0, dragging = false;
+
+      el.addEventListener("mousedown", (e) => {
+        if (e.target.classList.contains("handle")) return; // ハンドルクリック時は無効
+        dragging = true;
+        offsetX = e.offsetX;
+        offsetY = e.offsetY;
+        el.style.zIndex = 1000;
+      });
+
+      window.addEventListener("mousemove", (e) => {
+        if (!dragging) return;
+        const parent = el.parentElement.getBoundingClientRect();
+        const newX = e.pageX - parent.left - offsetX;
+        const newY = e.pageY - parent.top - offsetY;
+        el.style.left = newX + "px";
+        el.style.top = newY + "px";
+      });
+
+      window.addEventListener("mouseup", () => {
+        if (!dragging) return;
+        dragging = false;
+        el.style.zIndex = 1;
+        saveBBox(el);
+      });
+    }
+
+    // --- サイズ変更 ---
+    function makeResizable(el) {
+      let resizing = false;
+      let handle = null;
+      let startX, startY, startW, startH;
+
+      el.querySelectorAll(".handle").forEach(h => {
+        h.addEventListener("mousedown", (e) => {
+          e.stopPropagation();
+          resizing = true;
+          handle = e.target.classList[1];
+          startX = e.pageX;
+          startY = e.pageY;
+          startW = parseInt(el.style.width);
+          startH = parseInt(el.style.height);
+          el.style.zIndex = 1000;
+        });
+      });
+
+      window.addEventListener("mousemove", (e) => {
+        if (!resizing) return;
+        const dx = e.pageX - startX;
+        const dy = e.pageY - startY;
+
+        switch (handle) {
+          case "br": // 右下
+            el.style.width = startW + dx + "px";
+            el.style.height = startH + dy + "px";
+            break;
+          case "tr": // 右上
+            el.style.width = startW + dx + "px";
+            el.style.top = parseInt(el.style.top) + dy + "px";
+            el.style.height = startH - dy + "px";
+            break;
+          case "bl": // 左下
+            el.style.left = parseInt(el.style.left) + dx + "px";
+            el.style.width = startW - dx + "px";
+            el.style.height = startH + dy + "px";
+            break;
+          case "tl": // 左上
+            el.style.left = parseInt(el.style.left) + dx + "px";
+            el.style.top = parseInt(el.style.top) + dy + "px";
+            el.style.width = startW - dx + "px";
+            el.style.height = startH - dy + "px";
+            break;
+        }
+      });
+
+      window.addEventListener("mouseup", () => {
+        if (!resizing) return;
+        resizing = false;
+        el.style.zIndex = 1;
+        saveBBox(el);
+      });
+    }
+
+    // --- 座標・サイズを保存 ---
+    function saveBBox(el) {
+      const pos = {
+        id: el.dataset.id,
+        x: parseInt(el.style.left),
+        y: parseInt(el.style.top),
+        w: parseInt(el.style.width),
+        h: parseInt(el.style.height),
+      };
+      bridge.saveBBox(JSON.stringify(pos));
+    }
+  </script>
+</body>
+</html>
